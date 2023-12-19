@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"net/http"
 	"os"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
@@ -20,7 +23,7 @@ type Movie struct {
 func findOne(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	id := request.PathParameters["id"]
 
-	cfg, err := external.LoadDefaultAWSConfig()
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
@@ -28,16 +31,17 @@ func findOne(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 		}, nil
 	}
 
-	svc := dynamodb.New(cfg)
-	req := svc.GetItemRequest(&dynamodb.GetItemInput{
+	svc := dynamodb.NewFromConfig(cfg)
+
+	res, err := svc.GetItem(context.TODO(), &dynamodb.GetItemInput{
 		TableName: aws.String(os.Getenv("TABLE_NAME")),
-		Key: map[string]dynamodb.AttributeValue{
-			"ID": dynamodb.AttributeValue{
-				S: aws.String(id),
+		Key: map[string]types.AttributeValue{
+			"ID": &types.AttributeValueMemberS{
+				Value: id,
 			},
 		},
 	})
-	res, err := req.Send()
+
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
@@ -45,9 +49,14 @@ func findOne(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 		}, nil
 	}
 
-	movie := Movie{
-		ID:   *res.Item["ID"].S,
-		Name: *res.Item["Name"].S,
+	var movie Movie
+
+	err = attributevalue.UnmarshalMap(res.Item, &movie)
+	if err != nil {
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       "Error while unmarshalling DynamoDB response",
+		}, nil
 	}
 
 	response, err := json.Marshal(movie)
@@ -59,7 +68,7 @@ func findOne(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 	}
 
 	return events.APIGatewayProxyResponse{
-		StatusCode: 200,
+		StatusCode: http.StatusOK,
 		Headers: map[string]string{
 			"Content-Type": "application/json",
 		},

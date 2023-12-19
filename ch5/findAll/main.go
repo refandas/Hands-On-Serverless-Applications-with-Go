@@ -1,14 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"net/http"
 	"os"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
@@ -18,7 +20,7 @@ type Movie struct {
 }
 
 func findAll() (events.APIGatewayProxyResponse, error) {
-	cfg, err := external.LoadDefaultAWSConfig()
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
@@ -26,11 +28,10 @@ func findAll() (events.APIGatewayProxyResponse, error) {
 		}, nil
 	}
 
-	svc := dynamodb.New(cfg)
-	req := svc.ScanRequest(&dynamodb.ScanInput{
+	svc := dynamodb.NewFromConfig(cfg)
+	res, err := svc.Scan(context.TODO(), &dynamodb.ScanInput{
 		TableName: aws.String(os.Getenv("TABLE_NAME")),
 	})
-	res, err := req.Send()
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
@@ -38,12 +39,14 @@ func findAll() (events.APIGatewayProxyResponse, error) {
 		}, nil
 	}
 
-	movies := make([]Movie, 0)
-	for _, item := range res.Items {
-		movies = append(movies, Movie{
-			ID:   *item["ID"].S,
-			Name: *item["Name"].S,
-		})
+	var movies []Movie
+
+	err = attributevalue.UnmarshalListOfMaps(res.Items, &movies)
+	if err != nil {
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       "Error while unmarshalling DynamoDB response",
+		}, err
 	}
 
 	response, err := json.Marshal(movies)
@@ -55,7 +58,7 @@ func findAll() (events.APIGatewayProxyResponse, error) {
 	}
 
 	return events.APIGatewayProxyResponse{
-		StatusCode: 200,
+		StatusCode: http.StatusOK,
 		Headers: map[string]string{
 			"Content-Type": "application/json",
 		},
