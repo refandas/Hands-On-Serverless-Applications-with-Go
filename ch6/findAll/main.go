@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"net/http"
 	"os"
 	"strconv"
@@ -9,7 +12,6 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
@@ -27,7 +29,7 @@ func findAll(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 		}, nil
 	}
 
-	cfg, err := external.LoadDefaultAWSConfig()
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
@@ -35,13 +37,12 @@ func findAll(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 		}, nil
 	}
 
-	svc := dynamodb.New(cfg)
-	req := svc.ScanRequest(&dynamodb.ScanInput{
+	svc := dynamodb.NewFromConfig(cfg)
+	res, err := svc.Scan(context.TODO(), &dynamodb.ScanInput{
 		TableName: aws.String(os.Getenv("TABLE_NAME")),
-		Limit:     aws.Int64(int64(size)),
+		Limit:     aws.Int32(int32(size)),
 	})
 
-	res, err := req.Send()
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusInternalServerError,
@@ -49,12 +50,14 @@ func findAll(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 		}, nil
 	}
 
-	movies := make([]Movie, 0)
-	for _, item := range res.Items {
-		movies = append(movies, Movie{
-			ID:   *item["ID"].S,
-			Name: *item["Name"].S,
-		})
+	var movies []Movie
+
+	err = attributevalue.UnmarshalListOfMaps(res.Items, &movies)
+	if err != nil {
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       "Error while decoding response item into struct",
+		}, nil
 	}
 
 	response, err := json.Marshal(movies)
@@ -66,7 +69,7 @@ func findAll(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 	}
 
 	return events.APIGatewayProxyResponse{
-		StatusCode: 200,
+		StatusCode: http.StatusOK,
 		Headers: map[string]string{
 			"Content-Type": "application/json",
 		},
